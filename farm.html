@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>幻彩水脈：究極養成</title>
+    <style>
+        :root { --land: #5d4037; --water: #00b4d8; --strawberry: #ff4d6d; }
+        body { background: #fdfaf1; margin: 0; font-family: sans-serif; }
+        
+        /* 數據看板 */
+        .dashboard { background: #2d6a4f; color: white; padding: 20px; border-radius: 0 0 25px 25px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
+        .grid-stats { display: flex; justify-content: space-between; }
+
+        /* 高難度瓶子容器 */
+        .puzzle-arena { display: flex; gap: 8px; overflow-x: auto; padding: 30px 10px; align-items: flex-end; height: 200px; }
+        
+        /* 瓶子樣式：根據屬性變換大小 */
+        .glass { 
+            border: 3px solid #333; border-radius: 5px 5px 15px 15px; 
+            background: rgba(255,255,255,0.6); position: relative; transition: 0.3s;
+            display: flex; flex-direction: column-reverse; cursor: pointer;
+        }
+        .glass.selected { transform: translateY(-20px); border-color: #ff9800; box-shadow: 0 10px 20px rgba(0,0,0,0.2); }
+        /* 鎖定瓶子樣式 */
+        .glass.locked::after {
+            content: "🔒"; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 20px;
+        }
+        .glass.locked { opacity: 0.6; pointer-events: none; background: #ccc; }
+
+        /* 農場區 */
+        .farm-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 15px; }
+        .plot { height: 80px; background: var(--land); border-radius: 12px; display: flex; align-items: center; justify-content: center; position: relative; }
+        .plant-growth { font-size: 40px; cursor: pointer; }
+
+        /* 分享文案氣泡 */
+        .share-bubble { background: #fff; border: 2px solid #07c160; padding: 10px; margin: 15px; border-radius: 15px; font-size: 14px; position: relative; }
+        .btn-wechat { background: #07c160; color: white; border: none; width: 90%; padding: 15px; border-radius: 50px; font-weight: bold; margin: 0 auto 20px; display: block; }
+    </style>
+</head>
+<body>
+
+<div class="dashboard">
+    <div class="grid-stats">
+        <div>等級: <b id="lv">1</b></div>
+        <div>金幣: <b id="gold">0</b></div>
+        <div>水滴: <b id="water">0</b></div>
+    </div>
+</div>
+
+<div class="share-bubble" id="slogan">
+    「這關瓶子怎麼不一樣大？我卡在第 7 關了，快來幫我倒水！」
+</div>
+
+<div class="puzzle-arena" id="arena"></div>
+
+<button class="btn-wechat" onclick="shareToWechat()">微信好友點此解鎖：獲取 3 次機會</button>
+
+<div class="farm-grid" id="farm"></div>
+
+<audio id="snd-pour" src="https://assets.mixkit.co/sfx/preview/mixkit-water-pour-in-glass-3120.mp3"></audio>
+<audio id="snd-win" src="https://assets.mixkit.co/sfx/preview/mixkit-winning-chimes-2015.mp3"></audio>
+
+<script>
+    let state = { lv: 1, water: 5, gold: 0, chances: 1, selected: null };
+    let bottles = [];
+    const colors = ['#f94144', '#f3722c', '#f8961e', '#f9c74f', '#90be6d', '#43aa8b', '#577590'];
+
+    // 1. 初始化高難度關卡
+    function initLevel() {
+        state.selected = null;
+        const bottleCount = Math.min(5 + Math.floor(state.lv / 2), 12);
+        bottles = [];
+
+        // 生成不同屬性的瓶子
+        for(let i=0; i<bottleCount; i++) {
+            let capacity = i > 8 ? 3 : 4; // 高難度下出現細管瓶
+            let isLocked = (state.lv > 5 && i === bottleCount - 1); // 等級5後最後一個瓶子鎖定
+            
+            bottles.push({
+                data: [],
+                cap: capacity,
+                locked: isLocked,
+                width: capacity === 3 ? 35 : 45,
+                height: capacity === 3 ? 110 : 140
+            });
+        }
+        
+        // 填充顏色隨機邏輯... (略，同前但加入容量限制)
+        fillRandomColors(bottleCount - 2);
+        render();
+    }
+
+    function fillRandomColors(fillCount) {
+        let pool = [];
+        for(let i=0; i<fillCount; i++) {
+            for(let j=0; j<4; j++) pool.push(colors[i % colors.length]);
+        }
+        pool.sort(() => Math.random() - 0.5);
+        for(let i=0; i<fillCount; i++) {
+            for(let j=0; j<4; j++) bottles[i].data.push(pool.pop());
+        }
+    }
+
+    // 2. 倒水邏輯與音效
+    function pour(fromIdx, toIdx) {
+        let from = bottles[fromIdx], to = bottles[toIdx];
+        if(fromIdx === toIdx || to.locked || to.data.length >= to.cap) return;
+
+        let color = from.data[from.data.length - 1];
+        if(to.data.length === 0 || to.data[to.data.length-1] === color) {
+            document.getElementById('snd-pour').play();
+            to.data.push(from.data.pop());
+            checkWin();
+        }
+    }
+
+    function checkWin() {
+        const isWin = bottles.every(b => b.data.length === 0 || (b.data.length === b.cap && b.data.every(c => c === b.data[0])));
+        if(isWin) {
+            document.getElementById('snd-win').play();
+            state.water += 15;
+            state.lv++;
+            updateSlogan();
+            alert("過關！你的農場土地升級了！");
+            initLevel();
+            renderFarm();
+        }
+    }
+
+    // 3. 真實微信分享模擬與文案
+    function updateSlogan() {
+        const slogans = [
+            "我的草莓渴了，誰能幫我倒杯水？🍓",
+            "這關竟然有冰封瓶子！救命！🔒",
+            "我已經 LV." + state.lv + " 了，這遊戲有毒！🍄",
+            "瓶子變小了，倒不進去啊啊啊！💧"
+        ];
+        document.getElementById('slogan').innerText = slogans[Math.floor(Math.random() * slogans.length)];
+    }
+
+    function shareToWechat() {
+        // 模擬微信分享
+        if (typeof wx !== 'undefined') {
+            wx.showShareMenu({ withShareTicket: true });
+            // 這邊會觸發小程式的原生轉發功能
+        } else {
+            const text = "🍓我在【水脈農場】達成 LV." + state.lv + "，這關倒水難度爆表，誰能幫幫我？";
+            prompt("請複製以下文案並分享給好友：", text);
+            state.water += 10;
+            state.chances += 3;
+            alert("分享成功（模擬）！獲得 10 滴水與 3 次挑戰機會。");
+        }
+        render();
+    }
+
+    // 4. 渲染農場與拼圖... (略)
+    function render() {
+        const arena = document.getElementById('arena');
+        arena.innerHTML = '';
+        bottles.forEach((b, i) => {
+            const el = document.createElement('div');
+            el.className = `glass ${state.selected === i ? 'selected' : ''} ${b.locked ? 'locked' : ''}`;
+            el.style.width = b.width + 'px';
+            el.style.height = b.height + 'px';
+            el.onclick = () => {
+                if(state.selected === null) state.selected = i;
+                else { pour(state.selected, i); state.selected = null; }
+                render();
+            };
+            b.data.forEach(c => {
+                const l = document.createElement('div');
+                l.style.backgroundColor = c;
+                l.style.height = (100 / b.cap) + '%';
+                l.style.width = '100%';
+                l.style.borderTop = '1px solid rgba(255,255,255,0.2)';
+                el.appendChild(l);
+            });
+            arena.appendChild(el);
+        });
+        document.getElementById('lv').innerText = state.lv;
+        document.getElementById('water').innerText = state.water;
+    }
+
+    function renderFarm() {
+        const farm = document.getElementById('farm');
+        farm.innerHTML = '';
+        for(let i=0; i<9; i++) {
+            const plot = document.createElement('div');
+            plot.className = 'plot';
+            plot.innerHTML = i < state.lv ? `<span class="plant-growth">🍓</span>` : `<span style="color:#8d6e63; font-size:10px;">LV.${i+1}解鎖</span>`;
+            farm.appendChild(plot);
+        }
+    }
+
+    initLevel();
+    renderFarm();
+</script>
+</body>
+</html>
